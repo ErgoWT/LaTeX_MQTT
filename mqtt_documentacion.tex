@@ -1,0 +1,522 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{array}
+
+\geometry{
+  top=2.5cm,
+  bottom=2.5cm,
+  left=3cm,
+  right=3cm
+}
+
+% Estilo para bloques de código/comandos
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codegreen}{rgb}{0.0,0.45,0.0}
+\definecolor{codepurple}{rgb}{0.45,0.0,0.55}
+\definecolor{codeblue}{rgb}{0.0,0.0,0.6}
+
+\lstdefinestyle{bash}{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codeblue},
+  commentstyle=\color{codegreen},
+  stringstyle=\color{codepurple},
+  breakatwhitespace=false,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  showspaces=false,
+  showstringspaces=false,
+  frame=single,
+  rulecolor=\color{gray!40},
+  xleftmargin=0.5em,
+  xrightmargin=0.5em,
+  aboveskip=0.8em,
+  belowskip=0.8em
+}
+
+\lstdefinestyle{config}{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!40},
+  xleftmargin=0.5em,
+  xrightmargin=0.5em,
+  aboveskip=0.8em,
+  belowskip=0.8em
+}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=codeblue,
+  urlcolor=codeblue
+}
+
+\setlength{\parskip}{0.6em}
+
+\title{\textbf{Configuración de MQTT con TLS en Raspberry Pi 4}\\
+\large Habilitación exclusiva del puerto 8883}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+% ============================================================
+\section{¿Qué es MQTT?}
+% ============================================================
+
+MQTT (del inglés \textit{Message Queuing Telemetry Transport}) es un protocolo de
+comunicación diseñado para transmitir mensajes de forma ligera y eficiente entre
+dispositivos. Fue creado originalmente para situaciones donde la conexión a
+internet es lenta, inestable o donde los dispositivos tienen recursos muy
+limitados, como microcontroladores con poca memoria.
+
+Hoy en día, MQTT se utiliza ampliamente en el \textbf{Internet de las Cosas}
+(\textit{IoT}, por sus siglas en inglés), que es el conjunto de dispositivos
+físicos conectados a internet para enviar y recibir información: sensores de
+temperatura, cámaras, actuadores, medidores de energía, etc.
+
+\subsection{Modelo de publicación y suscripción}
+
+MQTT funciona con un modelo llamado \textit{publicación/suscripción}
+(``pub/sub''). A diferencia de una llamada telefónica directa entre dos
+personas, este modelo introduce un intermediario llamado \textbf{bróker}. El
+funcionamiento general es el siguiente:
+
+\begin{itemize}
+  \item Un dispositivo que tiene datos (por ejemplo, un sensor de temperatura)
+    los \textbf{publica} en el bróker bajo un nombre llamado \textbf{tópico}
+    (en inglés, \textit{topic}). Por ejemplo: \texttt{casa/sala/temperatura}.
+  \item Otro dispositivo que quiere recibir esos datos se \textbf{suscribe} al
+    mismo tópico en el bróker.
+  \item El bróker actúa como punto central: recibe los mensajes y los reenvía a
+    todos los suscriptores del tópico correspondiente.
+\end{itemize}
+
+Con este esquema, el dispositivo que publica no necesita saber quién va a
+recibir el mensaje, y el dispositivo que recibe no necesita saber de dónde
+proviene. Todo pasa a través del bróker.
+
+\subsection{Ventajas de MQTT en IoT}
+
+\begin{itemize}
+  \item \textbf{Bajo consumo de ancho de banda:} los mensajes son muy pequeños,
+    ideales para dispositivos con conexión lenta o de bajo costo.
+  \item \textbf{Bajo consumo energético:} pensado para dispositivos con batería.
+  \item \textbf{Simplicidad:} fácil de implementar en hardware con recursos
+    limitados.
+  \item \textbf{Flexibilidad:} un bróker puede manejar miles de clientes al
+    mismo tiempo.
+\end{itemize}
+
+% ============================================================
+\section{El bróker Mosquitto en Raspberry Pi 4}
+% ============================================================
+
+El \textbf{bróker} es el servidor central de MQTT: todos los dispositivos se
+conectan a él para publicar o suscribirse. En este proyecto se utiliza
+\textbf{Eclipse Mosquitto}, una implementación de código abierto, muy liviana y
+ampliamente utilizada en proyectos IoT.
+
+La \textbf{Raspberry Pi 4} funciona como el servidor (bróker) donde se instala y
+ejecuta Mosquitto. Es un mini-ordenador de bajo costo y consumo que corre el
+sistema operativo Raspberry Pi OS (basado en Linux/Debian), lo que lo hace ideal
+para este tipo de aplicaciones.
+
+\subsection{Puertos de comunicación}
+
+MQTT utiliza puertos TCP para las conexiones:
+
+\begin{itemize}
+  \item \textbf{Puerto 1883:} conexión sin cifrado. Cualquier persona que pueda
+    interceptar el tráfico de red podría leer los mensajes.
+  \item \textbf{Puerto 8883:} conexión cifrada mediante \textbf{TLS/SSL}
+    (el mismo mecanismo que usa HTTPS en los navegadores web). Garantiza que
+    los mensajes viajan de forma segura y que el bróker es quien dice ser.
+\end{itemize}
+
+En este documento se configurará el bróker para que acepte \textbf{únicamente}
+conexiones en el puerto 8883, es decir, solo conexiones seguras y cifradas.
+
+\subsection{¿Qué es TLS y por qué es importante?}
+
+TLS (\textit{Transport Layer Security}) es un protocolo de seguridad que cifra
+la comunicación entre dos partes. Para que TLS funcione se necesitan
+\textbf{certificados digitales}, que son archivos que identifican a un servidor
+de forma confiable, similar a un documento de identidad digital.
+
+Para generar estos certificados se necesita una \textbf{Autoridad Certificadora}
+(CA, del inglés \textit{Certificate Authority}), que es quien ``firma'' y avala
+los certificados. En este caso se creará una CA propia (autofirmada), válida
+para uso interno o en redes locales.
+
+% ============================================================
+\section{Configuración del bróker Mosquitto con TLS\\(puerto 8883 exclusivo)}
+% ============================================================
+
+A continuación se describe el procedimiento completo para instalar Mosquitto en
+una Raspberry Pi 4 y configurarlo para operar \textbf{exclusivamente} en el
+puerto 8883 con TLS.
+
+Todos los comandos se ejecutan en la terminal de la Raspberry Pi. Los que
+comienzan con \texttt{sudo} requieren permisos de administrador.
+
+% ----------------------------------------------------------
+\subsection{Paso 1: Limpieza e instalación de Mosquitto}
+% ----------------------------------------------------------
+
+Si el sistema ya tenía una instalación previa de Mosquitto (por ejemplo,
+configurada solo para el puerto 1883), es recomendable eliminarla
+completamente para evitar conflictos con archivos de configuración anteriores.
+
+\begin{lstlisting}[style=bash]
+sudo systemctl stop mosquitto 2>/dev/null || true
+sudo apt purge -y mosquitto mosquitto-clients
+sudo rm -rf /etc/mosquitto /var/lib/mosquitto /var/log/mosquitto
+\end{lstlisting}
+
+Tras limpiar el sistema, se actualiza la lista de paquetes disponibles y se
+instala Mosquitto junto con sus herramientas de cliente:
+
+\begin{lstlisting}[style=bash]
+sudo apt update
+sudo apt install -y mosquitto mosquitto-clients
+\end{lstlisting}
+
+Para verificar que la instalación fue exitosa:
+
+\begin{lstlisting}[style=bash]
+mosquitto -h | head -1
+systemctl status mosquitto --no-pager -l
+\end{lstlisting}
+
+% ----------------------------------------------------------
+\subsection{Paso 2: Crear la estructura de directorios y usuarios}
+% ----------------------------------------------------------
+
+Mosquitto organiza su configuración en carpetas específicas. Se crean los
+directorios necesarios con el siguiente comando:
+
+\begin{lstlisting}[style=bash]
+sudo mkdir -p /etc/mosquitto/{conf.d,certs,ca_certificates,passwords}
+\end{lstlisting}
+
+Cada directorio cumple una función concreta:
+
+\begin{itemize}
+  \item \texttt{conf.d/}: archivos de configuración adicionales que Mosquitto
+    carga automáticamente al iniciarse.
+  \item \texttt{certs/}: almacena la clave privada y el certificado del bróker.
+  \item \texttt{ca\_certificates/}: almacena el certificado de la CA
+    que validará las conexiones de los clientes.
+  \item \texttt{passwords/}: almacena el archivo de usuarios y contraseñas.
+\end{itemize}
+
+A continuación se crea el usuario \texttt{usuario1} con contraseña
+\texttt{qwerty123}. El comando \texttt{mosquitto\_passwd} guarda la contraseña
+de forma \textbf{cifrada} usando un algoritmo de hash seguro (PBKDF2 con
+SHA-512 en versiones recientes de Mosquitto), lo que la hace resistente a
+ataques de diccionario:
+
+\begin{lstlisting}[style=bash]
+sudo mosquitto_passwd -c /etc/mosquitto/passwords/users.db usuario1
+\end{lstlisting}
+
+El sistema pedirá escribir la contraseña dos veces para confirmarla.
+
+Luego se asignan los permisos correctos al archivo de contraseñas:
+
+\begin{lstlisting}[style=bash]
+sudo chown root:mosquitto /etc/mosquitto/passwords/users.db
+sudo chmod 640 /etc/mosquitto/passwords/users.db
+\end{lstlisting}
+
+\textbf{¿Por qué estos permisos?}
+
+\begin{itemize}
+  \item \texttt{chown root:mosquitto} asigna como dueño a \texttt{root} (el
+    administrador del sistema) y como grupo a \texttt{mosquitto} (el usuario
+    con el que corre el servicio).
+  \item \texttt{chmod 640} establece los permisos en octal:
+    \begin{itemize}
+      \item \textbf{6 (rw-)} para el dueño: \texttt{root} puede leer y escribir.
+      \item \textbf{4 (r--)} para el grupo: \texttt{mosquitto} solo puede leer
+        (necesario para autenticar a los clientes).
+      \item \textbf{0 (---)} para todos los demás: nadie más puede acceder al
+        archivo.
+    \end{itemize}
+\end{itemize}
+
+En resumen: \texttt{root} controla el archivo, el servicio Mosquitto puede
+leerlo para autenticar conexiones, y ningún otro usuario del sistema tiene
+acceso.
+
+% ----------------------------------------------------------
+\subsection{Paso 3: Generar los certificados TLS}
+% ----------------------------------------------------------
+
+Para cifrar las comunicaciones en el puerto 8883 se necesitan tres elementos:
+
+\begin{enumerate}
+  \item \textbf{Certificado de la CA (ca.crt):} es el certificado raíz que
+    firma y valida los demás certificados.
+  \item \textbf{Clave privada del bróker (broker.key):} archivo secreto que
+    solo debe conocer el bróker.
+  \item \textbf{Certificado del bróker (broker.crt):} identifica al bróker y
+    está firmado por la CA.
+\end{enumerate}
+
+\subsubsection{3.1 Crear la Autoridad Certificadora (CA)}
+
+\begin{lstlisting}[style=bash]
+# Generar la clave privada de la CA (2048 bits)
+openssl genrsa -out /etc/mosquitto/ca_certificates/ca.key 2048
+
+# Generar el certificado autofirmado de la CA (válido por 3650 días ~10 años)
+openssl req -new -x509 -days 3650 \
+  -key /etc/mosquitto/ca_certificates/ca.key \
+  -out /etc/mosquitto/ca_certificates/ca.crt \
+  -subj "/CN=MiCA-MQTT"
+\end{lstlisting}
+
+\subsubsection{3.2 Crear la clave y el certificado del bróker}
+
+\begin{lstlisting}[style=bash]
+# Generar la clave privada del broker
+openssl genrsa -out /etc/mosquitto/certs/broker.key 2048
+
+# Crear la solicitud de certificado (CSR)
+openssl req -new \
+  -key /etc/mosquitto/certs/broker.key \
+  -out /etc/mosquitto/certs/broker.csr \
+  -subj "/CN=broker-mqtt"
+\end{lstlisting}
+
+\subsubsection{3.3 Agregar la dirección IP como SAN (\textit{Subject Alternative Name})}
+
+El campo SAN (\textit{Subject Alternative Name}) indica a qué direcciones IP o
+nombres de dominio es válido el certificado. Esto es \textbf{obligatorio} en
+las versiones modernas de TLS: sin SAN, los clientes rechazarán el certificado
+con un error de verificación.
+
+Se crea un archivo temporal con la extensión de SAN, indicando la IP de la
+Raspberry Pi (en este ejemplo, \texttt{192.168.1.100}; se debe reemplazar con
+la IP real del dispositivo):
+
+\begin{lstlisting}[style=bash]
+cat > /tmp/broker-ext.cnf << EOF
+[v3_req]
+subjectAltName = IP:192.168.1.100
+EOF
+\end{lstlisting}
+
+\subsubsection{3.4 Firmar el certificado del bróker con la CA}
+
+\begin{lstlisting}[style=bash]
+openssl x509 -req -days 3650 \
+  -in /etc/mosquitto/certs/broker.csr \
+  -CA /etc/mosquitto/ca_certificates/ca.crt \
+  -CAkey /etc/mosquitto/ca_certificates/ca.key \
+  -CAcreateserial \
+  -out /etc/mosquitto/certs/broker.crt \
+  -extensions v3_req \
+  -extfile /tmp/broker-ext.cnf
+\end{lstlisting}
+
+\textbf{Nota sobre la validez del certificado:} el valor \texttt{-days 3650}
+establece una vigencia de 10 años, suficiente para entornos de desarrollo o
+redes internas. En un entorno de producción se recomienda usar períodos más
+cortos (por ejemplo, 365 días) y renovar los certificados periódicamente.
+
+\subsubsection{3.5 Ajustar los permisos de los certificados}
+
+\begin{lstlisting}[style=bash]
+sudo chown root:mosquitto /etc/mosquitto/certs/broker.key
+sudo chmod 640 /etc/mosquitto/certs/broker.key
+sudo chmod 644 /etc/mosquitto/certs/broker.crt
+sudo chmod 644 /etc/mosquitto/ca_certificates/ca.crt
+\end{lstlisting}
+
+La clave privada (\texttt{broker.key}) es el archivo más sensible: solo
+\texttt{root} puede modificarla y solo el grupo \texttt{mosquitto} puede
+leerla. Los certificados públicos (\texttt{.crt}) pueden ser leídos por
+cualquier usuario del sistema, ya que no contienen información secreta.
+
+\subsubsection{3.6 Verificar los certificados}
+
+Para confirmar que el certificado del bróker fue firmado correctamente por la
+CA y que el SAN está incluido:
+
+\begin{lstlisting}[style=bash]
+openssl verify -CAfile /etc/mosquitto/ca_certificates/ca.crt \
+  /etc/mosquitto/certs/broker.crt
+
+openssl x509 -in /etc/mosquitto/certs/broker.crt -noout -text \
+  | grep -A2 "Subject Alternative Name"
+\end{lstlisting}
+
+El primer comando debe responder \texttt{OK}. El segundo debe mostrar la IP
+configurada en el paso anterior.
+
+% ----------------------------------------------------------
+\subsection{Paso 4: Configurar Mosquitto para usar solo el puerto 8883}
+% ----------------------------------------------------------
+
+Se crea el archivo de configuración principal en el directorio
+\texttt{conf.d/}. Mosquitto carga automáticamente todos los archivos
+\texttt{.conf} que encuentre en esa carpeta al iniciar.
+
+\begin{lstlisting}[style=bash]
+sudo nano /etc/mosquitto/conf.d/mqtt_8883.conf
+\end{lstlisting}
+
+El contenido del archivo debe ser el siguiente:
+
+\begin{lstlisting}[style=config]
+# Puerto seguro con TLS/SSL
+listener 8883
+
+# Certificados TLS
+cafile   /etc/mosquitto/ca_certificates/ca.crt
+certfile /etc/mosquitto/certs/broker.crt
+keyfile  /etc/mosquitto/certs/broker.key
+
+# Versión mínima de TLS (recomendado TLS 1.2 o superior)
+tls_version tlsv1.2
+
+# Requerir usuario y contraseña para conectarse
+allow_anonymous false
+password_file /etc/mosquitto/passwords/users.db
+\end{lstlisting}
+
+\textbf{Descripción de cada directiva:}
+
+\begin{itemize}
+  \item \texttt{listener 8883}: indica a Mosquitto que escuche conexiones
+    entrantes únicamente en el puerto 8883. Al no agregar un bloque
+    \texttt{listener 1883}, ese puerto queda \textbf{deshabilitado}.
+  \item \texttt{cafile}: ruta al certificado de la CA. Los clientes deben
+    presentar un certificado firmado por esta CA (o simplemente tener la CA en
+    su almacén de confianza).
+  \item \texttt{certfile} y \texttt{keyfile}: certificado público y clave
+    privada del bróker, usados para establecer el cifrado TLS.
+  \item \texttt{tls\_version tlsv1.2}: exige al menos TLS 1.2, descartando
+    versiones antiguas e inseguras (SSLv3, TLS 1.0, TLS 1.1).
+  \item \texttt{allow\_anonymous false}: prohíbe conexiones sin autenticación.
+    Todo cliente debe identificarse con usuario y contraseña.
+  \item \texttt{password\_file}: apunta al archivo de usuarios y contraseñas
+    creado en el Paso 2.
+\end{itemize}
+
+% ----------------------------------------------------------
+\subsection{Paso 5: Reiniciar y verificar el servicio}
+% ----------------------------------------------------------
+
+Se reinicia Mosquitto para que cargue la nueva configuración:
+
+\begin{lstlisting}[style=bash]
+sudo systemctl restart mosquitto
+sudo systemctl status mosquitto --no-pager -l
+\end{lstlisting}
+
+El estado debe aparecer como \texttt{active (running)}. Para confirmar que
+Mosquitto está escuchando \textbf{solo} en el puerto 8883 y no en el 1883:
+
+\begin{lstlisting}[style=bash]
+sudo ss -tlnp | grep mosquitto
+\end{lstlisting}
+
+La salida debe mostrar únicamente el puerto \textbf{8883} asociado al proceso
+\texttt{mosquitto}.
+
+% ----------------------------------------------------------
+\subsection{Paso 6: Prueba de conectividad}
+% ----------------------------------------------------------
+
+Para verificar que el bróker funciona correctamente se utilizan las
+herramientas de cliente que incluye el paquete \texttt{mosquitto-clients}.
+
+Abrir dos terminales en la Raspberry Pi (o en cualquier equipo de la red con
+acceso al bróker):
+
+\textbf{Terminal A — Suscriptor} (espera mensajes en el tópico
+\texttt{prueba/sensor}):
+
+\begin{lstlisting}[style=bash]
+mosquitto_sub -h 192.168.1.100 -p 8883 \
+  --cafile /etc/mosquitto/ca_certificates/ca.crt \
+  -u usuario1 -P qwerty123 \
+  -t prueba/sensor -v
+\end{lstlisting}
+
+\textbf{Terminal B — Publicador} (envía un mensaje al mismo tópico):
+
+\begin{lstlisting}[style=bash]
+mosquitto_pub -h 192.168.1.100 -p 8883 \
+  --cafile /etc/mosquitto/ca_certificates/ca.crt \
+  -u usuario1 -P qwerty123 \
+  -t prueba/sensor -m "Hola desde MQTT con TLS"
+\end{lstlisting}
+
+Si la configuración es correcta, la Terminal A mostrará el mensaje:
+
+\begin{lstlisting}[style=config]
+prueba/sensor Hola desde MQTT con TLS
+\end{lstlisting}
+
+\textbf{Explicación de los parámetros usados:}
+
+\begin{itemize}
+  \item \texttt{-h}: dirección IP del bróker.
+  \item \texttt{-p 8883}: puerto de conexión.
+  \item \texttt{--cafile}: certificado de la CA para verificar la identidad del
+    bróker y establecer el cifrado TLS.
+  \item \texttt{-u} y \texttt{-P}: usuario y contraseña de autenticación.
+  \item \texttt{-t}: nombre del tópico.
+  \item \texttt{-m}: mensaje a publicar (solo en el publicador).
+  \item \texttt{-v}: modo detallado, muestra el tópico junto al mensaje (solo
+    en el suscriptor).
+\end{itemize}
+
+% ============================================================
+\section{Resumen}
+% ============================================================
+
+En este documento se describe cómo funciona MQTT en el contexto del IoT y cómo
+configurar un bróker Mosquitto en una Raspberry Pi 4 para que opere
+\textbf{exclusivamente} con conexiones seguras en el puerto 8883.
+
+Los puntos clave del proceso son:
+
+\begin{enumerate}
+  \item Instalar Mosquitto desde los repositorios oficiales de Raspberry Pi OS.
+  \item Crear la estructura de directorios y un archivo de usuarios con
+    contraseña cifrada.
+  \item Generar una Autoridad Certificadora propia y firmar un certificado para
+    el bróker con el campo SAN apuntando a la IP del dispositivo.
+  \item Configurar Mosquitto para escuchar \textbf{solo} en el puerto 8883 con
+    TLS 1.2 y autenticación obligatoria.
+  \item Verificar que el servicio esté activo y comprobar la comunicación con
+    las herramientas \texttt{mosquitto\_pub} y \texttt{mosquitto\_sub}.
+\end{enumerate}
+
+Con esta configuración, el bróker MQTT queda protegido: todas las
+comunicaciones viajan cifradas (no pueden ser leídas por terceros en la red) y
+solo los usuarios autorizados pueden conectarse al sistema.
+
+\end{document}
